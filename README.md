@@ -1,4 +1,4 @@
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21698181.svg)](https://doi.org/10.5281/zenodo.21698181)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21698181-blue)](https://doi.org/10.5281/zenodo.21698181)
 
 # Human cloud reports overstate nighttime clearing
 
