@@ -1,0 +1,412 @@
+"""
+fetch_metar.py — Pull METAR observations near each frame timestamp and emit
+weak labels per docs/labeling-protocol.md §"Output file format".
+
+For each frame in dataset_v2_*/meta/*.json the script finds the closest METAR
+observation from a configurable ICAO airport within ±MATCH_WINDOW seconds,
+parses cloud groups (coverage + base height + CB/TCU genus hint), and appends
+rows to labels/weak_labels.csv.
+
+Run:
+  python fetch_metar.py --station SBPA
+  python fetch_metar.py --station SBPA --site-lat -30.05 --site-lon -51.17 \
+                        --datasets 'dataset_v2_*'
+
+Data source: Iowa Environmental Mesonet ASOS archive
+(mesonet.agron.iastate.edu). Public, no auth required. Returns raw METAR text;
+this script does its own cloud-group parsing because the structured fields
+collapse multi-layer reports.
+
+Finding your nearest ICAO airport:
+  - search openstreetmap.org for "ICAO" near your location, OR
+  - https://www.airportcodes.io/en/airport/ → filter by country/region.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime as dt
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+def http_get(url: str, timeout: int = 60) -> str:
+    """Use curl so we inherit the macOS system trust store. The python.org
+    installer ships its own CA bundle that won't trust corporate MITM."""
+    r = subprocess.run(
+        # IEM ASOS enforces a 1s-per-IP throttle (HTTP 429) since 2026-04-21,
+        # and returns 503 under load. curl --retry natively backs off on
+        # 429/503/timeouts, so a transient throttle retries instead of aborting
+        # the whole batch.
+        ["curl", "-sS", "--fail", "--retry", "5", "--retry-delay", "2",
+         "--max-time", str(timeout), url],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"curl failed for {url}: {r.stderr.strip()}")
+    return r.stdout
+
+PROJECT_ROOT = Path(__file__).parent.resolve()
+LABELS_DIR = PROJECT_ROOT / "labels"
+WEAK_LABELS_CSV = LABELS_DIR / "weak_labels.csv"
+# Raw IEM CSV is cached on disk by (station, date-range): a multi-site run hits
+# N sites x 6 years x 2 stations, and IEM throttles to 1 req/IP/s (HTTP 429),
+# so re-fetching every run is slow and rude. Delete a file here to force a
+# refresh (e.g. for an incomplete trailing year that may gain late reports).
+METAR_CACHE_DIR = PROJECT_ROOT / "data" / "metar_cache"
+
+ASOS_URL = (
+    "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
+    "?station={station}&data=metar&year1={y1}&month1={m1}&day1={d1}"
+    "&year2={y2}&month2={m2}&day2={d2}&tz=Etc/UTC&format=onlycomma"
+    "&latlon=yes&missing=M&trace=T&direct=yes"
+)
+STATION_META_URL = "https://mesonet.agron.iastate.edu/json/network.py?network={network}"
+
+MATCH_WINDOW_S = 15 * 60  # ±15 min — standard in the literature
+
+# Frame filenames (ccd1_YYYYMMDD_HHMMSS) are encoded in the camera host's local
+# wall-clock time, not UTC. Set ALLSKY_LOCAL_TZ to an IANA name (e.g.
+# "America/Edmonton") so DST flips are handled correctly. Default UTC keeps
+# behavior identical for sites that actually run in UTC.
+def _resolve_local_tz() -> ZoneInfo:
+    name = os.environ.get("ALLSKY_LOCAL_TZ", "UTC")
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        sys.exit(f"ALLSKY_LOCAL_TZ={name!r} is not a known IANA timezone")
+
+LOCAL_TZ = _resolve_local_tz()
+
+# Cloud-group regex: SKC/CLR/NCD/NSC/CAVOK, or 3-letter coverage + 3-digit base.
+# Optional CB/TCU genus suffix.
+CLOUD_GROUP_RE = re.compile(
+    r"\b(SKC|CLR|NCD|NSC|CAVOK|NOCLO|(FEW|SCT|BKN|OVC|VV)(\d{3})(CB|TCU)?)\b"
+)
+
+COVERAGE_TO_OKTA = {
+    "SKC": 0, "CLR": 0, "NCD": 0, "NSC": 0, "CAVOK": 0, "NOCLO": 0,
+    "FEW": 2, "SCT": 4, "BKN": 6, "OVC": 8, "VV": 8,
+}
+
+# Present-weather obscurations that degrade sky transparency even under a clear
+# sky (the astronomy-relevant ones). Ordered by transparency impact; first match
+# wins. Smoke (FU) and volcanic ash (VA) are the wildfire signal we care about.
+_OBSCURATION_PATTERNS = [
+    ("smoke", re.compile(r"\b(?:FU|VA)\b")),
+    ("dust",  re.compile(r"\b(?:BLDU|BLSA|DRDU|DRSA|DS|SS|PO|DU|SA)\b")),
+    ("haze",  re.compile(r"\bHZ\b")),
+    ("fog",   re.compile(r"\b(?:MI|BC|PR|FZ)?FG\b")),
+    ("mist",  re.compile(r"\bBR\b")),
+]
+
+
+def parse_visibility_sm(text: str) -> float | None:
+    """Prevailing visibility in statute miles from a METAR body (Canadian/US form).
+
+    Handles '10SM', '3/4SM', '1 1/2SM', 'P6SM' (>6 -> 6), 'M1/4SM' (<1/4 -> 1/4)."""
+    m = re.search(r"\b(\d+)\s+(\d+)/(\d+)SM\b", text)        # whole + fraction
+    if m:
+        return int(m.group(1)) + int(m.group(2)) / int(m.group(3))
+    m = re.search(r"\b[MP]?(\d+)/(\d+)SM\b", text)           # fraction (M/P prefix)
+    if m:
+        return int(m.group(1)) / int(m.group(2))
+    m = re.search(r"\b[MP]?(\d+)SM\b", text)                 # whole (M/P prefix)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def parse_obscuration(raw_metar: str) -> tuple[float | None, str | None]:
+    """Return (visibility_sm, obscuration_category) from the report body (pre-RMK)."""
+    body = raw_metar.split(" RMK", 1)[0]
+    for cat, pat in _OBSCURATION_PATTERNS:
+        if pat.search(body):
+            return parse_visibility_sm(body), cat
+    return parse_visibility_sm(body), None
+
+
+@dataclass
+class MetarObs:
+    station: str
+    timestamp: dt.datetime  # UTC
+    raw: str
+    coverage_okta: int            # 0..8
+    cloud_base_m: float | None    # meters AGL; None if no clouds reported
+    genus_hint: str | None        # CB, TCU, or None
+    layers: list[tuple[str, int]] # [(coverage_str, base_ft), ...] all layers
+    is_auto: bool = False         # report carried the AUTO modifier (no human augmentation)
+    visibility_sm: float | None = None  # prevailing visibility, statute miles
+    obscuration: str | None = None      # smoke|dust|haze|fog|mist|None (transparency)
+
+
+def parse_metar_cloud(raw_metar: str) -> tuple[int, float | None, str | None, list[tuple[str, int]]]:
+    """Return (max_okta_coverage, lowest_base_m_with_okta>=3, genus_hint, all_layers).
+
+    Highest-coverage layer wins for okta. CB/TCU on any layer flags genus_hint.
+    """
+    layers: list[tuple[str, int]] = []
+    max_okta = 0
+    genus_hint: str | None = None
+    lowest_base_ft: int | None = None
+
+    for m in CLOUD_GROUP_RE.finditer(raw_metar):
+        token = m.group(1)
+        if token in COVERAGE_TO_OKTA:
+            okta = COVERAGE_TO_OKTA[token]
+            layers.append((token, 0))
+            max_okta = max(max_okta, okta)
+            continue
+        cov = m.group(2)
+        base_ft = int(m.group(3)) * 100
+        suffix = m.group(4)
+        if not cov or not COVERAGE_TO_OKTA.get(cov):
+            continue
+        okta = COVERAGE_TO_OKTA[cov]
+        layers.append((cov, base_ft))
+        if okta > max_okta:
+            max_okta = okta
+        if okta >= 3 and (lowest_base_ft is None or base_ft < lowest_base_ft):
+            lowest_base_ft = base_ft
+        if suffix and not genus_hint:
+            genus_hint = suffix
+
+    cloud_base_m = lowest_base_ft * 0.3048 if lowest_base_ft is not None else None
+    return max_okta, cloud_base_m, genus_hint, layers
+
+
+def altitude_bucket_from_base_m(base_m: float | None) -> str | None:
+    if base_m is None:
+        return None
+    if base_m < 2000:
+        return "low"
+    if base_m < 6000:
+        return "mid"
+    return "high"
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def _asos_csv_text(station: str, start: dt.date, end_inclusive: dt.date) -> str:
+    """Raw IEM ASOS CSV for [start, end_inclusive], cached on disk by (station, range).
+
+    A header-only response (no data rows) is returned but NOT cached, so a
+    transient empty result retries on the next run instead of sticking."""
+    cache = METAR_CACHE_DIR / f"{station}_{start.isoformat()}_{end_inclusive.isoformat()}.csv"
+    if cache.exists() and cache.stat().st_size > 0:
+        return cache.read_text()
+
+    end = end_inclusive + dt.timedelta(days=1)  # IEM's day2 is exclusive
+    url = ASOS_URL.format(
+        station=station,
+        y1=start.year, m1=start.month, d1=start.day,
+        y2=end.year, m2=end.month, d2=end.day,
+    )
+    print(f"  GET {url}")
+    text = http_get(url, timeout=60)
+    # Persist only when there is at least one data row (header + >=1 line).
+    if sum(1 for ln in text.splitlines() if ln.strip()) > 1:
+        METAR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(".part")
+        tmp.write_text(text)
+        tmp.replace(cache)
+    return text
+
+
+def fetch_metar_csv(station: str, start: dt.date, end_inclusive: dt.date) -> list[MetarObs]:
+    text = _asos_csv_text(station, start, end_inclusive)
+
+    obs: list[MetarObs] = []
+    reader = csv.DictReader(text.splitlines())
+    for row in reader:
+        raw = (row.get("metar") or "").strip()
+        valid_str = (row.get("valid") or "").strip()
+        if not raw or not valid_str:
+            continue
+        try:
+            ts = dt.datetime.strptime(valid_str, "%Y-%m-%d %H:%M").replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+        okta, base_m, genus, layers = parse_metar_cloud(raw)
+        vis_sm, obsc = parse_obscuration(raw)
+        obs.append(MetarObs(
+            station=station, timestamp=ts, raw=raw,
+            coverage_okta=okta, cloud_base_m=base_m,
+            genus_hint=genus, layers=layers,
+            is_auto=bool(re.search(r"\bAUTO\b", raw)),
+            visibility_sm=vis_sm, obscuration=obsc,
+        ))
+    return obs
+
+
+def lookup_station_latlon(station: str) -> tuple[float, float] | None:
+    """Best-effort: try common ASOS networks for the station's lat/lon."""
+    common_networks = [
+        "BR__ASOS", "AS_ASOS", "INTL", "AWOS",
+        f"{station[:2]}_ASOS",  # country-prefix heuristic
+    ]
+    seen: dict[str, tuple[float, float]] = {}
+    for net in dict.fromkeys(common_networks):
+        try:
+            data = json.loads(http_get(STATION_META_URL.format(network=net), timeout=30))
+        except Exception:
+            continue
+        for s in data.get("features", []):
+            sid = s.get("properties", {}).get("sid") or s.get("id")
+            if not sid or sid in seen:
+                continue
+            geom = s.get("geometry") or {}
+            coords = geom.get("coordinates")
+            if coords and len(coords) == 2:
+                seen[sid] = (coords[1], coords[0])  # geojson is (lon, lat)
+        if station in seen:
+            return seen[station]
+    return seen.get(station)
+
+
+def discover_frames(dataset_glob: str) -> list[tuple[str, dt.datetime]]:
+    """Walk dataset_v2_*/meta/*.json (or images/*.jpg) and extract (frame_id, ts UTC)."""
+    frames: list[tuple[str, dt.datetime]] = []
+    for ds in sorted(PROJECT_ROOT.glob(dataset_glob)):
+        meta_dir = ds / "meta"
+        if meta_dir.is_dir():
+            files = sorted(meta_dir.glob("*.json"))
+            stem_source = [f.stem for f in files]
+        else:
+            files = sorted((ds / "images").glob("*.jpg")) if (ds / "images").is_dir() else []
+            stem_source = [f.stem for f in files]
+        for stem in stem_source:
+            m = re.search(r"(\d{8}_\d{6})", stem)
+            if not m:
+                continue
+            ts_local = dt.datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").replace(tzinfo=LOCAL_TZ)
+            frames.append((stem, ts_local.astimezone(dt.timezone.utc)))
+    return frames
+
+
+def write_weak_labels(rows: list[dict]) -> int:
+    """Append rows to weak_labels.csv, dedup by (frame_id, source, attribute, source_id)."""
+    cols = [
+        "frame_id", "source", "attribute", "value", "value_unit",
+        "timestamp", "source_distance_km", "source_distance_s",
+    ]
+    LABELS_DIR.mkdir(parents=True, exist_ok=True)
+    existing: dict[tuple, dict] = {}
+    if WEAK_LABELS_CSV.exists():
+        with open(WEAK_LABELS_CSV, newline="") as f:
+            for r in csv.DictReader(f):
+                existing[(r["frame_id"], r["source"], r["attribute"], r.get("timestamp", ""))] = r
+    added = 0
+    for row in rows:
+        key = (row["frame_id"], row["source"], row["attribute"], row["timestamp"])
+        if key not in existing:
+            added += 1
+        existing[key] = row
+    with open(WEAK_LABELS_CSV, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for r in sorted(existing.values(), key=lambda x: (x["frame_id"], x["attribute"])):
+            w.writerow(r)
+    return added
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--station", required=True, help="ICAO of nearest reporting airport (e.g. SBPA, KSEA, LFPG)")
+    ap.add_argument("--datasets", default="dataset_v2_*", help="glob for dataset directories under project root")
+    ap.add_argument("--site-lat", type=float, default=None, help="your sensor latitude (decimal degrees)")
+    ap.add_argument("--site-lon", type=float, default=None, help="your sensor longitude (decimal degrees)")
+    ap.add_argument("--station-lat", type=float, default=None, help="override station lat if IEM lookup fails")
+    ap.add_argument("--station-lon", type=float, default=None, help="override station lon if IEM lookup fails")
+    ap.add_argument("--match-window-s", type=int, default=MATCH_WINDOW_S, help="±seconds for METAR-to-frame match")
+    args = ap.parse_args()
+
+    print(f"Filename timezone: {LOCAL_TZ.key} (set ALLSKY_LOCAL_TZ to change)")
+    frames = discover_frames(args.datasets)
+    if not frames:
+        sys.exit(f"No frames found under {args.datasets}/{{meta/,images/}}")
+    print(f"Discovered {len(frames)} frames")
+
+    days = sorted({ts.date() for _, ts in frames})
+    print(f"Date range: {days[0]} → {days[-1]} ({len(days)} days)")
+
+    if args.station_lat is not None and args.station_lon is not None:
+        station_latlon = (args.station_lat, args.station_lon)
+        print(f"Station {args.station} location (override): lat={station_latlon[0]:.4f} lon={station_latlon[1]:.4f}")
+    else:
+        station_latlon = lookup_station_latlon(args.station)
+        if station_latlon:
+            print(f"Station {args.station} location: lat={station_latlon[0]:.4f} lon={station_latlon[1]:.4f}")
+        else:
+            print(f"Warning: could not look up {args.station} lat/lon — pass --station-lat/--station-lon to override")
+
+    distance_km: float | None = None
+    if station_latlon and args.site_lat is not None and args.site_lon is not None:
+        distance_km = haversine_km(args.site_lat, args.site_lon, *station_latlon)
+        print(f"Sensor → station distance: {distance_km:.1f} km")
+
+    print(f"Fetching METARs for {args.station} {days[0]} → {days[-1]} …")
+    obs = fetch_metar_csv(args.station, days[0], days[-1])
+    print(f"Got {len(obs)} METAR observations")
+    if not obs:
+        sys.exit("No METAR observations returned — wrong station ID or no data for that range?")
+
+    # Index METARs by timestamp for fast nearest lookup (sorted bisect would be better but list is short)
+    obs.sort(key=lambda o: o.timestamp)
+    metar_times = [o.timestamp for o in obs]
+
+    rows = []
+    matched = 0
+    for frame_id, ts in frames:
+        # Find nearest METAR within window
+        nearest = None
+        nearest_dt = None
+        for i, mt in enumerate(metar_times):
+            d = abs((ts - mt).total_seconds())
+            if nearest_dt is None or d < nearest_dt:
+                nearest_dt = d
+                nearest = obs[i]
+        if nearest is None or nearest_dt is None or nearest_dt > args.match_window_s:
+            continue
+        matched += 1
+        common = {
+            "frame_id": frame_id,
+            "source": "metar",
+            "timestamp": nearest.timestamp.isoformat(),
+            "source_distance_km": f"{distance_km:.2f}" if distance_km is not None else "",
+            "source_distance_s": int((ts - nearest.timestamp).total_seconds()),
+        }
+
+        # Emit one row per attribute
+        rows.append({**common, "attribute": "coverage_okta", "value": str(nearest.coverage_okta), "value_unit": "okta"})
+        if nearest.cloud_base_m is not None:
+            rows.append({**common, "attribute": "cloud_base_height_m", "value": f"{nearest.cloud_base_m:.0f}", "value_unit": "m"})
+            ab = altitude_bucket_from_base_m(nearest.cloud_base_m)
+            if ab:
+                rows.append({**common, "attribute": "altitude_bucket", "value": ab, "value_unit": "class"})
+        if nearest.genus_hint:
+            rows.append({**common, "attribute": "cloud_genus_hint", "value": nearest.genus_hint, "value_unit": "wmo_code"})
+        rows.append({**common, "attribute": "raw_metar", "value": nearest.raw, "value_unit": "string"})
+
+    added = write_weak_labels(rows)
+    print(f"Matched {matched}/{len(frames)} frames to METAR within ±{args.match_window_s}s")
+    print(f"Wrote {added} new rows to {WEAK_LABELS_CSV}  (total rows in file include cumulative dedup-merged history)")
+
+
+if __name__ == "__main__":
+    main()

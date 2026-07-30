@@ -1,0 +1,12 @@
+# Core analysis
+numpy>=1.24
+ephem>=4.1
+netCDF4>=1.6
+
+# Figures
+matplotlib>=3.7
+pandas>=2.0      # diurnal panel only (make_figures.py reads the METAR cache)
+cartopy>=0.22    # map + mask figures (make_figures.py make_map, figure_masks.py)
+
+# Data fetching (only needed to rebuild caches from scratch)
+requests>=2.31

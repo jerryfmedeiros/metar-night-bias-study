@@ -1,0 +1,9 @@
+site,insitu_valid_pct_all,insitu_valid_pct_snow_season,n_matched_days,agree_pct,leak_pct_era5free_insitu_snow,overexclude_pct_era5snow_insitu_bare
+calgary,39.4,74.8,864,75.9,0.2,23.8
+vancouver,3.5,7.0,76,63.2,0.0,36.8
+edmonton,43.8,85.8,959,86.0,0.8,13.1
+winnipeg,0.0,0.0,0,,,
+toronto,23.2,46.6,508,66.1,0.2,33.7
+ottawa,34.5,69.3,756,82.0,0.3,17.7
+montreal,32.7,65.8,717,72.1,0.0,27.9
+halifax,30.2,60.5,662,72.1,1.1,26.9

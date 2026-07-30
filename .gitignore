@@ -1,0 +1,16 @@
+# rebuilt caches (rebuild with the fetch scripts; shipped inputs live under data/)
+goes_cache/
+viirs_cache/
+era5_cache/
+pm25_cache/
+results/
+__pycache__/
+*.pyc
+.DS_Store
+
+# setup artifacts (recreated per README quickstart; canonical copies live in data/)
+checkpoints/
+snow_cds_scratch/
+
+# local provenance of superseded log versions; not part of the release
+data/*/superseded/
