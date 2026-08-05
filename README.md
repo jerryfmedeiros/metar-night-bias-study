@@ -5,7 +5,7 @@
 Code and data behind:
 
 **Medeiros (2026).** *Human cloud reports overstate nighttime clearing: a ceilometer,
-GOES, and VIIRS comparison at eight Canadian airports* (submitted to
+GOES, and VIIRS comparison at eight Canadian airports* (in preparation for
 J. Atmos. Oceanic Technol.). At all eight major Canadian airports, the human-augmented
 record reports 7–14 pp more clear sky at night than by day, while a paired
 automated ceilometer (at four of the cities), the GOES ABI clear-sky mask, and

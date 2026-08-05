@@ -40,8 +40,8 @@ LABEL_COLS = ["frame_id", "source", "attribute", "value", "value_unit",
               "timestamp", "source_distance_km", "source_distance_s"]
 
 # Site lat/lon must be provided via --site-lat/--site-lon or the SITE_LAT/
-# SITE_LON env vars. We intentionally don't ship hardcoded defaults — exact
-# coordinates are sensitive (effectively a home address for a backyard rig).
+# SITE_LON env vars. No hardcoded default: every caller in this study passes a
+# station from sites.py, and a silent fallback would sample the wrong pixel.
 DEFAULT_LAT = None
 DEFAULT_LON = None
 
@@ -49,10 +49,11 @@ GOES_BUCKET = "noaa-goes19"
 S3_HTTPS_BASE = f"https://{GOES_BUCKET}.s3.amazonaws.com"
 SCAN_INTERVAL_MIN = 5  # CONUS scan cadence
 
-# Frame filenames (ccd1_YYYYMMDD_HHMMSS) are local wall-clock time on the
-# camera host. ALLSKY_LOCAL_TZ must be an IANA name (e.g. "America/Edmonton")
-# so DST is handled. Without it the snap-to-scan logic samples GOES from the
-# wrong moment by the local-UTC offset.
+# Only the ground-imagery labelling entry point below uses this; the study's
+# samplers work in UTC throughout and never touch it. Those filenames carry
+# local wall-clock time, so ALLSKY_LOCAL_TZ must be an IANA name (e.g.
+# "America/Edmonton") for DST to be handled. Default UTC leaves behaviour
+# unchanged for callers whose filenames are already UTC.
 def _resolve_local_tz() -> ZoneInfo:
     name = os.environ.get("ALLSKY_LOCAL_TZ", "UTC")
     try:
@@ -63,10 +64,9 @@ def _resolve_local_tz() -> ZoneInfo:
 LOCAL_TZ = _resolve_local_tz()
 
 # CONUS sectors have product code suffix C. GOES-19 ABI Level-2 product names.
-# NOTE: GOES-19 doesn't publish cloud-top *temperature* for CONUS (only full
-# disk/mesoscale). Cloud-top *height* in ACHAC is the better signal anyway —
-# it maps directly to altitude family for genus discrimination, and we have
-# the surface thermal sensor for ground-level temperature.
+# GOES-19 doesn't publish cloud-top *temperature* for CONUS (only full disk and
+# mesoscale), so CTTC is unavailable at these sites. This study uses ACMC alone;
+# the other products are retained for callers outside it.
 PRODUCT_CODES = {
     "ACMC":  ("BCM",   "cloud_present",          "binary"),       # 0=clear 1=cloud
     "ACTPC": ("Phase", "cloud_top_phase",        "category"),     # 0..5

@@ -20,7 +20,7 @@ Design notes
   very oblique there). The satellite within a family is chosen per-timestamp by the
   cutover dates in climatology_goes.select_goes_bucket.
 * Every site, Calgary included, now uses the IEM station metadata. Calgary was once
-  pinned to the earlier single-site reference point (51.05, -114.07, 1043 m) inherited
+  pinned to an earlier single-site reference point about 8 km from CYYC, inherited
   from the original scripts; it is not any more. The difference is immaterial to every
   published result (it shifts the solar-altitude cut by a few reports out of ~23,000:
   CYYC night N 22,879 -> 22,866, CYBW 33,602 -> 33,577) but it does mean the night-N

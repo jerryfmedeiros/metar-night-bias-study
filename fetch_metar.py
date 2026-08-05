@@ -73,10 +73,11 @@ STATION_META_URL = "https://mesonet.agron.iastate.edu/json/network.py?network={n
 
 MATCH_WINDOW_S = 15 * 60  # ±15 min — standard in the literature
 
-# Frame filenames (ccd1_YYYYMMDD_HHMMSS) are encoded in the camera host's local
-# wall-clock time, not UTC. Set ALLSKY_LOCAL_TZ to an IANA name (e.g.
-# "America/Edmonton") so DST flips are handled correctly. Default UTC keeps
-# behavior identical for sites that actually run in UTC.
+# Only the ground-imagery labelling entry point below uses this; the study's
+# analyses work in UTC throughout and never touch it. Those filenames carry
+# local wall-clock time, so ALLSKY_LOCAL_TZ must be an IANA name (e.g.
+# "America/Edmonton") for DST flips to be handled. Default UTC keeps behaviour
+# identical for callers whose filenames are already UTC.
 def _resolve_local_tz() -> ZoneInfo:
     name = os.environ.get("ALLSKY_LOCAL_TZ", "UTC")
     try:

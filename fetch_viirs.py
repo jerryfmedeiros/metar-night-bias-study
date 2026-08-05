@@ -21,7 +21,7 @@ Integer_Cloud_Mask (0 confident cloudy, 1 probably cloudy, 2 probably clear,
 
 Run a bring-up to confirm structure against a real file:
   python fetch_viirs.py --describe --platform NOAA20 --date 2024-01-15 \
-                        --lat 51.05 --lon -114.07
+                        --lat 51.1139 --lon -114.0203
 """
 from __future__ import annotations
 
@@ -284,8 +284,8 @@ def main():
                     help="download one covering granule and dump its structure + a sample")
     ap.add_argument("--platform", default="NOAA20", choices=list(SHORT_NAME))
     ap.add_argument("--date", required=True, help="YYYY-MM-DD (UTC day to search)")
-    ap.add_argument("--lat", type=float, default=51.05)
-    ap.add_argument("--lon", type=float, default=-114.07)
+    ap.add_argument("--lat", type=float, default=51.1139)     # CYYC
+    ap.add_argument("--lon", type=float, default=-114.0203)
     args = ap.parse_args()
 
     day = dt.datetime.strptime(args.date, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc)

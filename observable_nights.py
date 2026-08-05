@@ -50,7 +50,7 @@ except ImportError:
 # Site geometry (shared by a site's stations; they are close enough to share one sky
 # budget). Defaults are Calgary; --site rebinds these globals at the top of main() so
 # the per-night ephem helpers (which read them at call time) use the right location.
-LAT, LON, ELEVATION_M = 51.05, -114.07, 1043
+LAT, LON, ELEVATION_M = 51.1139, -114.0203, 1084   # CYYC
 LOCAL_TZ = ZoneInfo("America/Edmonton")
 
 USABLE_OKTA = 2          # SKC+FEW

@@ -1,5 +1,5 @@
 """
-metar_climatology.py — Advanced climatology analysis for Allsky Cloud Research.
+metar_climatology.py — METAR sky-state climatology by solar regime and season.
 
 Analyzes:
 1. Day vs. Night "Astronomy Bias"
@@ -23,10 +23,10 @@ try:
 except ImportError:
     sys.exit("Error: Could not import fetch_metar.py. Ensure it is in the current directory.")
 
-# Default coordinates for Calgary
-LAT = 51.05
-LON = -114.07
-ELEVATION_M = 1043
+# Defaults, overridden by --site (or --lat/--lon) from the sites.py registry
+LAT = 51.1139            # CYYC
+LON = -114.0203
+ELEVATION_M = 1084
 
 def calculate_sun_alt(timestamp: dt.datetime, lat: float, lon: float, elevation: float) -> float:
     obs = ephem.Observer()

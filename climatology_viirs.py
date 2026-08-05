@@ -5,7 +5,7 @@ comparison. VIIRS only sees a site at its ~13:30 and ~01:30 overpass times, so a
 "day vs night" VIIRS delta is really an afternoon-vs-post-midnight snapshot — it captures
 the diurnal convective cycle, not the all-hours average GOES/METAR use, and is therefore
 NOT apples-to-apples with them. We keep that aggregate (clearly caveated) but the real
-test is the **per-moment collocation (gold standard)**: for every VIIRS sample we pull
+test is the **per-moment same-scene collocation**: for every VIIRS sample we pull
 the nearest human METAR (+/-30 min) and compare the *same scene*. The night contingency
 (human=clear while VIIRS=cloud, vs the reverse) and its McNemar test are the most direct
 possible evidence of the human over-reporting nighttime clarity, free of sampling-time
@@ -241,7 +241,7 @@ def main():
                     db = stats[MAIN_BOX][regime][season]
                     db[box_label] += 1
                     db["TOTAL"] += 1
-                # Gold-standard collocation: nearest human METAR to this exact scene.
+                # Same-scene collocation: nearest human METAR to this exact scene.
                 match = nearest_usable(h_epochs, h_usable, t)
                 if match is not None:
                     hu, hdt = match
@@ -277,7 +277,7 @@ def main():
     print(f"\nCollected: DAY={samples_found['DAY']}, NIGHT={samples_found['NIGHT']}, "
           f"matched to METAR={n_matched} ({n_dl} downloads, {attempts} day-draws)")
 
-    # --- Aggregate VIIRS day/night (CAVEAT: overpass-time snapshot, not all-hours) ---
+    # --- Aggregate VIIRS day/night (overpass-time snapshot, not all-hours) ---
     print("\n  NOTE: the aggregate below samples only ~13:30/01:30 overpasses, so it")
     print("  reflects the diurnal cycle, NOT an all-hours day/night average. The matched")
     print("  comparison further down is the apples-to-apples artifact test.")
@@ -298,7 +298,7 @@ def main():
         lo, hi = wilson_ci(cn, nn)
         print(f"{tag:<16} | {cn/nn*100:5.1f} [{lo:4.1f},{hi:4.1f}] {nn:5d} | {cn/nn*100-day_clear:+11.1f}")
 
-    # --- GOLD STANDARD: per-moment human-vs-VIIRS collocation, two footprints ---
+    # --- Same-scene per-moment human-vs-VIIRS collocation, two footprints ---
     # Single pixel (point) vs a whole-sky box (cloud fraction) that better matches the
     # human's dome-wide okta. If the night artifact is real but washed out by the point
     # footprint, the box version should sharpen it (whole-sky VIIRS catches more cloud).
