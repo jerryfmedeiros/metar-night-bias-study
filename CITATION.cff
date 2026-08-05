@@ -1,4 +1,4 @@
-cff-version: 1.2.0
+cff-version: 1.2.1
 message: "If you use this code or data, please cite the paper below."
 title: "metar-night-bias: code and data for 'Human cloud reports overstate nighttime clearing'"
 authors:
