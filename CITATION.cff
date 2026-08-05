@@ -4,7 +4,7 @@ title: "metar-night-bias: code and data for 'Human cloud reports overstate night
 authors:
   - family-names: Fernandes Medeiros
     given-names: Jerry
-    email: jerry.fmedeiros@gmail.com
+    email: jerry@allskylab.ca
     affiliation: "Independent Researcher, Calgary, Alberta, Canada"
     orcid: "https://orcid.org/0000-0001-5825-7675"
 version: "1.1"
