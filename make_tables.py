@@ -60,13 +60,11 @@ def load_moon(path="data/derived/viirs_moon_split.csv"):
 
 def build_moon_rows():
     """Rows for the moonlit/dark table (tab:moon). Edmonton's strata are snow-
-    contaminated (see the VIIRS results section) and render as dashes."""
+    contaminated; they print like every other site's, and the table caption
+    says they are shown for completeness but not read."""
     moon = load_moon()
     lines = []
     for slug, name, icao in SITES:
-        if slug == "edmonton":
-            lines.append(f"{name:9s} & --- & --- \\\\")
-            continue
         m = moon[slug]
         d, l = m["dark"], m["moonlit"]
         lines.append(

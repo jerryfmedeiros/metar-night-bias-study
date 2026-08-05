@@ -12,7 +12,7 @@ automated ceilometer (at four of the cities), the GOES ABI clear-sky mask, and
 scene-matched VIIRS overpasses see at most a few points of real clearing.
 
 Every table value in the paper is reproducible from the data shipped here, with no
-downloads. So is every figure except Figure 2, which plots two individual satellite
+downloads. So is every figure except the mask-scene figure (figure_masks), which plots two individual satellite
 scenes and re-fetches them from S3 and LAADS (see *Rebuilding from scratch*). All
 random steps (satellite sampling, bootstraps) are seeded; the default seed is 42 and
 bootstraps use B = 2000.
@@ -42,6 +42,8 @@ fetch_all_sites.py              driver: AUTO screen + per-site analyses
 human_deltas.py          human night-day deltas (full-year/snow-free/seasonal)
 goes_nightly.py          night-unit GOES deltas from the per-draw logs
 dynamic_tables.py               snow-free human/GOES deltas, H-G, DoD + threshold sweep;
+                                also seasonal snow-free human rows (metar_<ICAO>_<SEASON>) and
+                                cross-family paired rows (human_minus_goes_{west,east});
                                 --era {enterprise,baseline,all} selects the cloud-mask algorithm
                                 behind the GOES columns (default enterprise, the paper's primary)
 viirs_scenes.py                 matched VIIRS analysis from the per-scene logs
@@ -53,11 +55,13 @@ discussion_stats.py             the Discussion/Limitations one-liners: cross-sit
                                 correlations + effective N, Spearman latitude-vs-H-G,
                                 48 site-year deltas + pair DoD slopes, diurnal
                                 pre-dawn/afternoon stats, >12,000-ft layer shares,
-                                VIIRS own night-day deltas
+                                VIIRS own night-day deltas, era season-regime share
+                                balance (erashare)
 fetch_snow_insitu.py            airport daily snow-on-ground from ECCC (snow-filter check)
 snow_insitu_validation.py       in-situ completeness + ERA5-vs-in-situ agreement,
                                 behind the ERA5-Land snow-screen justification
-make_tables.py                  regenerates the paper's main results table (tab:main) rows from the derived
+make_tables.py                  regenerates the paper's main results table (tab:main) and
+                                moonlit/dark table (tab:moon) rows from the derived
                                 tables; --check verifies a .tex against them
 make_figures.py / figure_masks.py   figures
 
@@ -117,7 +121,9 @@ checkpoints/                    gitignored sampler resume-state (goes_progress*.
 ## Reproducing the headline numbers (no downloads needed)
 
 The shipped caches and logs are enough to rebuild every number in the paper.
-One-time setup (all readers point at `data/` directly):
+One-time setup (readers point at `data/` directly, with one exception:
+`discussion_stats.py` also reads `results/dynamic_tables.csv`, so run the
+`dynamic_tables.py` lines before it):
 
 ```bash
 pip install numpy ephem            # netCDF4/matplotlib/pandas/cartopy only for sampling/figures

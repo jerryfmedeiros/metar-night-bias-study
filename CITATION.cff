@@ -2,13 +2,13 @@ cff-version: 1.2.0
 message: "If you use this code or data, please cite the paper below."
 title: "metar-night-bias: code and data for 'Human cloud reports overstate nighttime clearing'"
 authors:
-  - family-names: Medeiros
+  - family-names: Fernandes Medeiros
     given-names: Jerry
     email: jerry.fmedeiros@gmail.com
-    affiliation: "Independent researcher, Calgary, Alberta, Canada"
+    affiliation: "Independent Researcher, Calgary, Alberta, Canada"
     orcid: "https://orcid.org/0000-0001-5825-7675"
-version: "1.0"
-date-released: 2026-07-29
+version: "1.1"
+date-released: 2026-08-04
 license: MIT
 identifiers:
   - type: doi

@@ -300,7 +300,7 @@ def _draw_goes_footprint(ax, g_lons, g_lats, geo):
 
 
 def _draw_viirs_box(ax, geo):
-    """Draw the 7×7 VIIRS pixel sampling box (~4.5 km × 4.5 km) around the station."""
+    """Draw the 7×7 VIIRS pixel sampling box (~5 km × 5 km) around the station."""
     from matplotlib.patches import Rectangle
     import cartopy.crs as _ccrs
     lon0 = SITE_LON - VIIRS_BOX_DLON
@@ -315,7 +315,7 @@ def _draw_viirs_box(ax, geo):
                             linewidth=1.2, edgecolor="black",
                             facecolor="none", transform=geo, zorder=10))
     txt = ax.text(SITE_LON + VIIRS_BOX_DLON + 0.15, SITE_LAT,
-                  "7×7 px\n(~4.5 km)", fontsize=5.5, color="black",
+                  "7×7 px\n(~5 km)", fontsize=5.5, color="black",
                   va="center", ha="left", transform=geo, zorder=10)
     txt.set_path_effects([mpe.withStroke(linewidth=2, foreground="white")])
 
@@ -385,7 +385,7 @@ def make_fig(snow_free_ts: dt.datetime, snow_ts: dt.datetime,
     fig.subplots_adjust(wspace=0.05, hspace=0.28,
                         left=0.08, right=0.97, top=0.92, bottom=0.09)
 
-    col_labels = ["GOES-East ABI  BCM  (~2 km, oblique ~45°)",
+    col_labels = ["GOES-East ABI  BCM  (~2 km, oblique ~69°)",
                   "VIIRS MVCM  (~750 m, near-nadir)"]
     for j, lbl in enumerate(col_labels):
         axes[0, j].set_title(lbl, fontsize=8, fontweight="bold", pad=4)

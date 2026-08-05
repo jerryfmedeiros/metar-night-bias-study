@@ -308,7 +308,7 @@ def make_forest():
 
     ax.set_title(
         "Human-augmented vs GOES satellite: night−day clear-sky bias\n"
-        "All 8 cities. Human 2020–2025; GOES Enterprise mask, Dec 2021–2025.\n"
+        "All 8 cities. Human 2020–2025; GOES Enterprise mask, 29 Nov 2021–2025.\n"
         "Dotted line = human − satellite difference",
         fontsize=8,
     )
@@ -465,7 +465,8 @@ def make_diurnal():
                     markeredgewidth=0.6, markerfacecolor=color)
         handles_all.append(
             Line2D([0],[0], color=color, ls=ls, lw=1.2,
-                   marker=marker, markersize=4, label=f"{name} ({icao})")
+                   marker=marker, markersize=4,
+                   label=f"{'Montréal' if name == 'Montreal' else name} ({icao})")
         )
     ax_all.set_xlim(0, 23)
     ax_all.set_xticks([0, 6, 12, 18, 23])
@@ -582,7 +583,7 @@ def make_artifact():
         ax.plot([hglo[i], hghi[i]], [y[i] + off] * 2, color="#000000", lw=1.6, zorder=4)
     ax.scatter(vd, y - off, marker="s", s=48, facecolors="none", edgecolors="#666666",
                lw=1.5, zorder=4,
-               label="Human excess over VIIRS (matched DoD, night-unit 95% CI)")
+               label="Human excess over VIIRS (matched DoD, night/day-unit 95% CI)")
     for i in range(n):
         ax.plot([vlo[i], vhi[i]], [y[i] - off] * 2, color="#666666", lw=1.1, zorder=3)
     ax.axvline(0, color="black", lw=1.0, zorder=2)

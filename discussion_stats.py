@@ -22,6 +22,11 @@ Computes, offline, from the shipped caches and derived tables:
   viirsdelta  the VIIRS mask's own night-minus-day clear delta per site
               (unit-weighted, snow-free, 7x7 box) — the satellite-side diurnal
               signal the geostationary-family discussion compares against
+  erashare    era balance of the GOES draws: per site, the largest gap between
+              the baseline and Enterprise eras in any season-and-regime cell's
+              share of the draws, over all draws and over snow-free draws —
+              the "not by sampling accident" sentence in the cloud-mask
+              inhomogeneity subsection
 
 Usage (from the repo root, reads data/ only):
   python3 discussion_stats.py [--csv results/discussion_stats.csv]
@@ -244,6 +249,49 @@ def main():
                        - np.mean([np.mean(v) for v in per["DAY"].values()]))
         emit("viirsdelta", f"{slug}_night_minus_day_pp", round(delta, 1))
         print(f"  {slug:10s} {delta:+.1f} pp")
+
+    # ---- erashare: era balance of the GOES draws -----------------------------
+    # Draws are deduped by timestamp at the human station's pixel of the site's
+    # primary family; the era cut is the cloud-mask algorithm change
+    # (2021-11-29 1900 UTC, as in dynamic_tables.py); snow-free keys the draw to
+    # its night/day unit date and drops units over > 1 cm ERA5-Land snow.
+    print("\n== era season-regime share balance (baseline vs enterprise) ==")
+    era_cut = dt.datetime(2021, 11, 29, 19, 0, tzinfo=dt.timezone.utc)
+    worst = {"all": 0.0, "snowfree": 0.0}
+    for slug, site in SITES.items():
+        family = "west" if slug == "vancouver" else "east"
+        d = json.loads((Path("data/snow_cache") / f"snow_{slug}.json").read_text())["daily"]
+        snow = {t for t, v in zip(d["time"], d["snow_depth_max"])
+                if v is not None and v > 0.01}
+        tz = ZoneInfo(site.iana_tz)
+        uniq = {}
+        with open(f"data/goes_draws/goes_draws_{slug}_{family}.csv") as fh:
+            for r in csv.DictReader(fh):
+                if r["station"] == site.human:
+                    uniq.setdefault(r["ts_utc"], r)
+        for tag in ("all", "snowfree"):
+            counts = {0: defaultdict(int), 1: defaultdict(int)}
+            for r in uniq.values():
+                ts_utc = dt.datetime.fromisoformat(r["ts_utc"])
+                if tag == "snowfree":
+                    ts = ts_utc.astimezone(tz)
+                    u = ((ts - dt.timedelta(hours=12)).date()
+                         if r["regime"] == "NIGHT" else ts.date())
+                    if str(u) in snow:
+                        continue
+                counts[int(ts_utc >= era_cut)][(r["season"], r["regime"])] += 1
+            tot = {e: sum(c.values()) for e, c in counts.items()}
+            cells = set(counts[0]) | set(counts[1])
+            gap = 100 * max(abs(counts[0][c] / tot[0] - counts[1][c] / tot[1])
+                            for c in cells)
+            emit("erashare", f"{slug}_max_cell_gap_pp_{tag}", round(gap, 1))
+            worst[tag] = max(worst[tag], gap)
+        print(f"  {slug:10s} all {worst['all']:.1f} (running max), "
+              f"snow-free {worst['snowfree']:.1f}")
+    emit("erashare", "max_over_sites_all", round(worst["all"], 1))
+    emit("erashare", "max_over_sites_snowfree", round(worst["snowfree"], 1))
+    print(f"  max over sites: all {worst['all']:.1f} pp, "
+          f"snow-free {worst['snowfree']:.1f} pp")
 
     Path(args.csv).parent.mkdir(exist_ok=True)
     with open(args.csv, "w", newline="") as fh:

@@ -89,6 +89,8 @@ def metar_units(site, station):
 ERA_CUT = dt.datetime(2021, 11, 29, 19, 0, tzinfo=dt.timezone.utc)
 ERAS = ("all", "baseline", "enterprise")
 SEASONS = ("WINTER", "SPRING", "SUMMER", "AUTUMN")
+SEASON_MONTHS = {"WINTER": {12, 1, 2}, "SPRING": {3, 4, 5},
+                 "SUMMER": {6, 7, 8}, "AUTUMN": {9, 10, 11}}
 # GOES-West platform handover, GOES-17 -> GOES-18.
 HANDOVER_1718 = dt.datetime(2023, 1, 4, tzinfo=dt.timezone.utc)
 
@@ -185,6 +187,24 @@ def main():
                                  n_night=len(nf), n_day=len(df),
                                  night_pct=round(float(np.mean(nf)) * 100, 1),
                                  day_pct=round(float(np.mean(df)) * 100, 1)))
+                # Seasonal human deltas on the same snow-free ground, so the seasonal
+                # human-vs-satellite comparison (the Calgary seasonal-structure sentence)
+                # is matched-window on both sides. Season is the unit key date's month.
+                if station == site.human:
+                    for s, months in SEASON_MONTHS.items():
+                        nf_s = [f for d, f in nu.items() if snowfree(d) and d.month in months]
+                        df_s = [f for d, f in du.items() if snowfree(d) and d.month in months]
+                        if len(nf_s) < 2 or len(df_s) < 2:
+                            continue
+                        pt_s, dist_s = boot_delta(nf_s, df_s, SEED + 100)
+                        lo_s = np.percentile(dist_s, 2.5) * 100
+                        hi_s = np.percentile(dist_s, 97.5) * 100
+                        rows.append(dict(site=slug, record=f"metar_{station}_{s}",
+                                         threshold_cm=thr * 100, delta_pp=round(pt_s, 1),
+                                         ci_lo=round(lo_s, 1), ci_hi=round(hi_s, 1),
+                                         n_night=len(nf_s), n_day=len(df_s),
+                                         night_pct=round(float(np.mean(nf_s)) * 100, 1),
+                                         day_pct=round(float(np.mean(df_s)) * 100, 1)))
             for fp in ("nearest", "box3", "box5"):
                 nf = [f for d, f in goes[fp]["NIGHT"].items() if snowfree(d)]
                 df = [f for d, f in goes[fp]["DAY"].items() if snowfree(d)]
@@ -264,6 +284,24 @@ def main():
                              delta_pp=round(hg, 1), ci_lo=round(float(np.percentile(bhg, 2.5)), 1),
                              ci_hi=round(float(np.percentile(bhg, 97.5)), 1),
                              n_night=len(cN), n_day=len(cD)))
+            # The same paired statistic against the cross-check family, so the claim
+            # that no human-excess verdict changes when the other disk is substituted
+            # is checkable from this table rather than by column arithmetic.
+            if goes_x is not None:
+                gnu, gdu = goes_x["nearest"]["NIGHT"], goes_x["nearest"]["DAY"]
+                cN = sorted(d for d in hnu if d in gnu and snowfree(d))
+                cD = sorted(d for d in hdu if d in gdu and snowfree(d))
+                gapN = np.array([hnu[d] - gnu[d] for d in cN])
+                gapD = np.array([hdu[d] - gdu[d] for d in cD])
+                hgx = (gapN.mean() - gapD.mean()) * 100
+                rng = np.random.default_rng(SEED + 100)
+                bhg = (gapN[rng.integers(0, len(gapN), (B, len(gapN)))].mean(1)
+                       - gapD[rng.integers(0, len(gapD), (B, len(gapD)))].mean(1)) * 100
+                rows.append(dict(site=slug, record=f"human_minus_goes_{xfam}",
+                                 threshold_cm=thr * 100, delta_pp=round(hgx, 1),
+                                 ci_lo=round(float(np.percentile(bhg, 2.5)), 1),
+                                 ci_hi=round(float(np.percentile(bhg, 97.5)), 1),
+                                 n_night=len(cN), n_day=len(cD)))
             if site.auto in AUTO_OK:
                 # Redraw both stations from ONE rng stream so they are resampled
                 # independently, as observable_nights.py and human_deltas.py do.
